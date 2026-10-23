@@ -51,6 +51,17 @@ Entries live behind `IChronicleStore`.
 
 The chain is chosen from the ambient Bedrock tenant. A tenant context cannot touch other chains; a system context writes to `~system` or names a tenant explicitly.
 
+## Recording inside a business transaction
+
+`IChronicleOutbox.RecordInTransactionAsync(connection, transaction, record)` writes the record (validated, its personal data already
+encrypted) to the pending table with the business change, so history commits or rolls back with it, and business writes of one tenant
+never wait for its chain head. `IChronicleIngestor` (in the background with `AddChronicleIngestor()`) links pending records into their
+chains in committed order, one ingester per cluster at a time, and skips records a crashed run already appended. Create the table with
+`ChroniclePending.SchemaSql(table, schema, setting, role)`; grant the application role `INSERT` on it.
+
+`AddChronicleBedrockSessions()` stores entries through Bedrock sessions: each tenant chain on the tenant's own cluster, in a transaction
+(so Bedrock's transaction scope works). `AddChronicleBedrockData()` keeps plain contexts.
+
 ## Configuration
 
 Section `Chronicle`.
@@ -62,6 +73,9 @@ Section `Chronicle`.
 | `OnlineRetention` | `null` | How long entries stay "online" before `ArchiveExpiredAsync` archives them. `null` means never |
 | `MaxAppendAttempts` | `8` | Retries when concurrent appends collide |
 | `VerificationPageSize` | `500` | Entries read per page during verification |
+| `PendingTable` / `PendingSchema` | `chronicle_pending` / `public` | The transactional outbox's table |
+| `IngestBatchSize` | `500` | Pending records linked per cluster in one pass |
+| `IngestInterval` | `1 s` | Wait of the background ingester when nothing is pending |
 
 ## Reacting to other packages
 

@@ -15,6 +15,11 @@ public sealed class InMemoryChronicleStore : IChronicleStore
         }
     }
 
+    public Task<bool> ContainsAsync(string chain, Guid entryId, CancellationToken ct)
+    {
+        lock (_gate) return Task.FromResult(_chains.TryGetValue(chain, out var list) && list.Values.Any(e => e.Id == entryId));
+    }
+
     public Task<bool> TryAppendAsync(AuditEntry entry, CancellationToken ct)
     {
         lock (_gate)

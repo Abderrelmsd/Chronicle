@@ -15,4 +15,17 @@ public sealed class ChronicleOptions
 
     public int MaxAppendAttempts { get; set; } = 8;
     public int VerificationPageSize { get; set; } = 500;
+
+    /// <summary>The pending table of the transactional outbox (<see cref="IChronicleOutbox"/>), in <see cref="PendingSchema"/>.</summary>
+    public string PendingTable { get; set; } = ChroniclePending.DefaultTable;
+
+    public string PendingSchema { get; set; } = "public";
+
+    /// <summary>Pending records linked per cluster in one ingest pass.</summary>
+    public int IngestBatchSize { get; set; } = 500;
+
+    /// <summary>How long the background ingester waits when nothing is pending.</summary>
+    public TimeSpan IngestInterval { get; set; } = TimeSpan.FromSeconds(1);
+
+    internal string PendingTableSql => $"\"{PendingSchema}\".\"{PendingTable}\"";
 }

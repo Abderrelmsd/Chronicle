@@ -18,24 +18,33 @@ internal sealed class ChronicleService(IChronicleStore store, IEncryptionService
 
     // ---- write ---------------------------------------------------------------------------------------------
 
-    public async Task<AuditEntry> RecordAsync(AuditRecord record, CancellationToken ct = default)
+    public async Task<AuditEntry> RecordAsync(AuditRecord record, CancellationToken ct = default) =>
+        await AppendAsync(await PrepareAsync(record, ct), ct);
+
+    /// <summary>Validates the record, resolves its chain and encrypts its personal data: everything but the chain link.</summary>
+    internal async Task<PreparedEntry> PrepareAsync(AuditRecord record, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(record.Action)) throw new ArgumentException("Action is required.", nameof(record));
         var chain = ResolveChain(record.TenantId);
         var pii = record.Pii ?? new Dictionary<string, string>();
         if (pii.Count > 0 && string.IsNullOrWhiteSpace(record.SubjectId)) throw new ArgumentException("PII requires a SubjectId (whose key encrypts it).", nameof(record));
 
-        await EnsureKey(_o.SealKeyId, ct);
         var id = Guid.NewGuid();
         var encrypted = await EncryptPii(chain, record.SubjectId, id, pii, ct);
-        var dataJson = (record.Data ?? new JsonObject()).ToJsonString();
+        return new PreparedEntry(id, chain, record.OccurredAt ?? time.GetUtcNow(), record.Action, record.EntityType, record.EntityId, record.Actor, record.SubjectId,
+            (record.Data ?? new JsonObject()).ToJsonString(), encrypted);
+    }
 
+    /// <summary>Links a prepared entry to the head of its chain, seals it and appends it, retrying when another writer appended first.</summary>
+    internal async Task<AuditEntry> AppendAsync(PreparedEntry prepared, CancellationToken ct)
+    {
+        await EnsureKey(_o.SealKeyId, ct);
         for (var attempt = 0; attempt < _o.MaxAppendAttempts; attempt++)
         {
-            var head = await store.GetHeadAsync(chain, ct);
+            var head = await store.GetHeadAsync(prepared.Chain, ct);
             var prev = head?.Hash ?? Genesis;
-            var unsealed = new AuditEntry(id, chain, (head?.Sequence ?? 0) + 1, record.OccurredAt ?? time.GetUtcNow(), record.Action, record.EntityType, record.EntityId,
-                record.Actor, record.SubjectId, dataJson, encrypted, prev, [], 0, []);
+            var unsealed = new AuditEntry(prepared.Id, prepared.Chain, (head?.Sequence ?? 0) + 1, prepared.OccurredAt, prepared.Action, prepared.EntityType, prepared.EntityId,
+                prepared.Actor, prepared.SubjectId, prepared.DataJson, prepared.Pii, prev, [], 0, []);
             var hash = EntryHasher.Chain(prev, EntryHasher.Canonical(unsealed));
             var seal = await hmac.SignAsync(_o.SealKeyId, hash, ct);
             var entry = unsealed with { Hash = hash, Seal = seal.Value, SealKeyVersion = seal.KeyVersion };

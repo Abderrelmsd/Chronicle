@@ -54,6 +54,7 @@ public sealed class Env : IAsyncDisposable
         if (ef)
         {
             s.AddSingleton<IChronicleDbFactory>(new InMemoryDbFactory(new InMemoryDatabaseRoot(), Guid.NewGuid().ToString(), ambient));
+            s.AddSingleton<IChronicleUnits, FactoryUnits>();
             s.AddSingleton<IChronicleStore, EfChronicleStore>();
         }
         s.AddChronicle(configure);

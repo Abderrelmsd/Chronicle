@@ -31,6 +31,19 @@ public sealed record AuditEntry(
     bool Archived = false,
     string? ArchiveRef = null);
 
+/// <summary>An entry ready to be linked into its chain: validated, with its personal data already encrypted (what the pending table holds).</summary>
+public sealed record PreparedEntry(
+    Guid Id,
+    string Chain,
+    DateTimeOffset OccurredAt,
+    string Action,
+    string? EntityType,
+    string? EntityId,
+    string? Actor,
+    string? SubjectId,
+    string DataJson,
+    IReadOnlyDictionary<string, EncryptedField> Pii);
+
 /// <summary>What callers record. <see cref="Data"/> is plaintext (must contain no PII); <see cref="Pii"/> fields are encrypted per <see cref="SubjectId"/>.</summary>
 public sealed class AuditRecord
 {
