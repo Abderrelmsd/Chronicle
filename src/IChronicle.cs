@@ -55,4 +55,7 @@ public interface IChronicleStore
     Task<IReadOnlyList<AuditEntry>> QueryAsync(string chain, ChronicleQuery query, CancellationToken ct);
     Task<IReadOnlyList<AuditEntry>> GetUnarchivedBeforeAsync(string chain, DateTimeOffset cutoff, int take, CancellationToken ct);
     Task MarkArchivedAsync(string chain, IReadOnlyCollection<long> sequences, string archiveRef, CancellationToken ct);
+
+    /// <summary>Whether the chain already holds the entry (the pending-table ingester skips what a crashed run appended).</summary>
+    Task<bool> ContainsAsync(string chain, Guid entryId, CancellationToken ct);
 }
