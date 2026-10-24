@@ -31,9 +31,16 @@ internal sealed class ChronicleService(IChronicleStore store, IEncryptionService
 
         var id = Guid.NewGuid();
         var encrypted = await EncryptPii(chain, record.SubjectId, id, pii, ct);
-        return new PreparedEntry(id, chain, record.OccurredAt ?? time.GetUtcNow(), record.Action, record.EntityType, record.EntityId, record.Actor, record.SubjectId,
+        return new PreparedEntry(id, chain, ToStoredPrecision(record.OccurredAt ?? time.GetUtcNow()), record.Action, record.EntityType, record.EntityId, record.Actor, record.SubjectId,
             (record.Data ?? new JsonObject()).ToJsonString(), encrypted);
     }
+
+    /// <summary>
+    /// The time as storage keeps it: UTC, whole microseconds. The hash covers the time, so it must be computed from exactly the value that
+    /// is read back; Postgres timestamptz (and most databases) drop .NET's sub-microsecond ticks, which Linux clocks do produce.
+    /// </summary>
+    internal static DateTimeOffset ToStoredPrecision(DateTimeOffset time)
+        => new(time.UtcTicks - time.UtcTicks % (TimeSpan.TicksPerMillisecond / 1000), TimeSpan.Zero);
 
     /// <summary>Links a prepared entry to the head of its chain, seals it and appends it, retrying when another writer appended first.</summary>
     internal async Task<AuditEntry> AppendAsync(PreparedEntry prepared, CancellationToken ct)

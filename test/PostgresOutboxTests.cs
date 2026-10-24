@@ -79,11 +79,44 @@ public class PostgresOutboxTests(PgFixture pg) : IClassFixture<PgFixture>
         return s.BuildServiceProvider();
     }
 
-    private static AuditRecord Record(string action, string? email = null) => new()
+    private static AuditRecord Record(string action, string? email = null, DateTimeOffset? occurredAt = null) => new()
     {
+        OccurredAt = occurredAt,
         Action = action, EntityType = "invoice", EntityId = "A-1", Actor = "u1", Data = new JsonObject { ["total"] = 12.5 },
         Pii = email is null ? null : new Dictionary<string, string> { ["email"] = email }, SubjectId = email is null ? null : "customer-1",
     };
+
+    [Fact]
+    public async Task Times_finer_than_a_microsecond_still_verify_after_a_round_trip()
+    {
+        Assert.SkipUnless(pg.Available, pg.Reason);
+        await using var sp = Build();
+        var tenants = sp.GetRequiredService<ITenantContextAccessor>();
+        var tenant = "t" + Guid.NewGuid().ToString("N")[..8];
+        // Linux clocks produce sub-microsecond ticks; Postgres keeps microseconds. The hash must be of the stored value.
+        var at = new DateTimeOffset(2026, 10, 24, 13, 0, 0, TimeSpan.FromHours(2)).AddTicks(1_234_567);
+
+        using (tenants.Use(tenant))
+        {
+            var chronicle = sp.GetRequiredService<IChronicle>();
+            await chronicle.RecordAsync(Record("invoice.saved", occurredAt: at), Ct);
+
+            var connections = sp.CreateScope().ServiceProvider.GetRequiredService<IBedrockConnectionFactory>();
+            await using var connection = await connections.OpenTenantConnectionAsync(Ct);
+            await using var tx = await connections.BeginTenantTransactionAsync(connection, cancellationToken: Ct);
+            await sp.GetRequiredService<IChronicleOutbox>().RecordInTransactionAsync(connection, tx, Record("invoice.issued", occurredAt: at), Ct);
+            await tx.CommitAsync(Ct);
+        }
+        Assert.Equal(1, await sp.GetRequiredService<IChronicleIngestor>().IngestOnceAsync(Ct));
+
+        using (tenants.Use(tenant))
+        {
+            var chronicle = sp.GetRequiredService<IChronicle>();
+            var verification = await chronicle.VerifyAsync(cancellationToken: Ct);
+            Assert.True(verification.IsValid, verification.Reason);
+            Assert.All(await chronicle.QueryAsync(cancellationToken: Ct), e => Assert.Equal(at.UtcTicks - at.UtcTicks % 10, e.OccurredAt.UtcTicks));
+        }
+    }
 
     [Fact]
     public async Task Records_reach_the_chain_only_with_a_commit_in_order_and_once()
