@@ -32,7 +32,7 @@ internal sealed class ChronicleService(IChronicleStore store, IEncryptionService
         var id = Guid.NewGuid();
         var encrypted = await EncryptPii(chain, record.SubjectId, id, pii, ct);
         return new PreparedEntry(id, chain, ToStoredPrecision(record.OccurredAt ?? time.GetUtcNow()), record.Action, record.EntityType, record.EntityId, record.Actor, record.SubjectId,
-            (record.Data ?? new JsonObject()).ToJsonString(), encrypted);
+            (record.Data ?? new JsonObject()).ToJsonString(), encrypted, string.IsNullOrWhiteSpace(record.Scope) ? null : record.Scope);
     }
 
     /// <summary>
@@ -51,7 +51,7 @@ internal sealed class ChronicleService(IChronicleStore store, IEncryptionService
             var head = await store.GetHeadAsync(prepared.Chain, ct);
             var prev = head?.Hash ?? Genesis;
             var unsealed = new AuditEntry(prepared.Id, prepared.Chain, (head?.Sequence ?? 0) + 1, prepared.OccurredAt, prepared.Action, prepared.EntityType, prepared.EntityId,
-                prepared.Actor, prepared.SubjectId, prepared.DataJson, prepared.Pii, prev, [], 0, []);
+                prepared.Actor, prepared.SubjectId, prepared.DataJson, prepared.Pii, prev, [], 0, [], Scope: prepared.Scope);
             var hash = EntryHasher.Chain(prev, EntryHasher.Canonical(unsealed));
             var seal = await hmac.SignAsync(_o.SealKeyId, hash, ct);
             var entry = unsealed with { Hash = hash, Seal = seal.Value, SealKeyVersion = seal.KeyVersion };
@@ -77,6 +77,12 @@ internal sealed class ChronicleService(IChronicleStore store, IEncryptionService
     {
         query ??= new ChronicleQuery();
         return store.QueryAsync(ResolveChain(query.TenantId), query with { Take = Math.Clamp(query.Take, 1, 1000) }, ct);
+    }
+
+    public Task<ChronicleSummary> SummarizeAsync(ChronicleQuery? query = null, CancellationToken ct = default)
+    {
+        query ??= new ChronicleQuery();
+        return store.SummarizeAsync(ResolveChain(query.TenantId), query, ct);
     }
 
     public async Task<IReadOnlyList<RevealedField>> RevealAsync(AuditEntry entry, CancellationToken ct = default)

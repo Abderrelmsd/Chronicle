@@ -29,7 +29,8 @@ public sealed record AuditEntry(
     int SealKeyVersion,
     byte[] Seal,
     bool Archived = false,
-    string? ArchiveRef = null);
+    string? ArchiveRef = null,
+    string? Scope = null);
 
 /// <summary>An entry ready to be linked into its chain: validated, with its personal data already encrypted (what the pending table holds).</summary>
 public sealed record PreparedEntry(
@@ -42,7 +43,8 @@ public sealed record PreparedEntry(
     string? Actor,
     string? SubjectId,
     string DataJson,
-    IReadOnlyDictionary<string, EncryptedField> Pii);
+    IReadOnlyDictionary<string, EncryptedField> Pii,
+    string? Scope = null);
 
 /// <summary>What callers record. <see cref="Data"/> is plaintext (must contain no PII); <see cref="Pii"/> fields are encrypted per <see cref="SubjectId"/>.</summary>
 public sealed class AuditRecord
@@ -59,6 +61,8 @@ public sealed class AuditRecord
     /// <summary>System contexts only: which tenant's chain to write to (default: the system chain).</summary>
     public string? TenantId { get; init; }
     public DateTimeOffset? OccurredAt { get; init; }
+    /// <summary>A part of the tenant the entry belongs to (a company, a site), to read one part's history; covered by the hash.</summary>
+    public string? Scope { get; init; }
 }
 
 public sealed record ChronicleQuery
@@ -68,6 +72,10 @@ public sealed record ChronicleQuery
     public string? Actor { get; init; }
     public string? Action { get; init; }
     public string? SubjectId { get; init; }
+    /// <summary>Entries of this scope only (and, with <see cref="IncludeUnscoped"/>, those of the whole tenant).</summary>
+    public string? Scope { get; init; }
+    /// <summary>With <see cref="Scope"/>: also the entries that belong to no scope (the tenant as a whole).</summary>
+    public bool IncludeUnscoped { get; init; }
     public DateTimeOffset? From { get; init; }
     public DateTimeOffset? To { get; init; }
     public bool IncludeArchived { get; init; }
@@ -76,6 +84,9 @@ public sealed record ChronicleQuery
     /// <summary>System contexts only: query this chain instead of the system chain.</summary>
     public string? TenantId { get; init; }
 }
+
+/// <summary>How many entries match a query, and their entity types (for a filter).</summary>
+public sealed record ChronicleSummary(int Total, IReadOnlyList<string> EntityTypes);
 
 public sealed record ChainHead(long Sequence, byte[] Hash);
 

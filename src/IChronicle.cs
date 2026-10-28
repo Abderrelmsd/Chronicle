@@ -9,6 +9,9 @@ public interface IChronicle
     /// <summary>Newest first. Archived entries are excluded unless <see cref="ChronicleQuery.IncludeArchived"/>.</summary>
     Task<IReadOnlyList<AuditEntry>> QueryAsync(ChronicleQuery? query = null, CancellationToken cancellationToken = default);
 
+    /// <summary>How many entries match (paging ignored), and their distinct entity types.</summary>
+    Task<ChronicleSummary> SummarizeAsync(ChronicleQuery? query = null, CancellationToken cancellationToken = default);
+
     /// <summary>Decrypts an entry's PII fields; fields of shredded subjects come back with <c>Value = null</c>.</summary>
     Task<IReadOnlyList<RevealedField>> RevealAsync(AuditEntry entry, CancellationToken cancellationToken = default);
 
@@ -53,6 +56,7 @@ public interface IChronicleStore
 
     Task<AuditEntry?> GetAsync(string chain, long sequence, CancellationToken ct);
     Task<IReadOnlyList<AuditEntry>> QueryAsync(string chain, ChronicleQuery query, CancellationToken ct);
+    Task<ChronicleSummary> SummarizeAsync(string chain, ChronicleQuery query, CancellationToken ct);
     Task<IReadOnlyList<AuditEntry>> GetUnarchivedBeforeAsync(string chain, DateTimeOffset cutoff, int take, CancellationToken ct);
     Task MarkArchivedAsync(string chain, IReadOnlyCollection<long> sequences, string archiveRef, CancellationToken ct);
 

@@ -9,7 +9,8 @@ internal static class EntryHasher
     {
         using var ms = new MemoryStream();
         using var w = new BinaryWriter(ms, Encoding.UTF8);
-        w.Write((byte)1); // canonical format version
+        // Format 1 has no scope; entries with a scope use format 2, which adds it, so entries written before scopes still verify.
+        w.Write(e.Scope is null ? (byte)1 : (byte)2);
         Str(w, e.Chain);
         w.Write(e.Sequence);
         w.Write(e.Id.ToByteArray());
@@ -23,6 +24,7 @@ internal static class EntryHasher
             w.Write(field.Envelope.Length);
             w.Write(field.Envelope);
         }
+        if (e.Scope is not null) Str(w, e.Scope);
         w.Flush();
         return ms.ToArray();
     }

@@ -123,6 +123,34 @@ public class ChronicleTests
         using (env.Tenants.Use("acme")) Assert.Equal(["admin.impersonated"], (await env.Chronicle.QueryAsync()).Select(e => e.Action));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Scoped_entries_are_read_by_scope_summarised_and_their_scope_cannot_be_moved(bool ef)
+    {
+        await using var env = new Env(ef);
+        using var _ = env.Tenants.Use("acme");
+        await env.Chronicle.RecordAsync(Env.Rec());
+        await env.Chronicle.RecordAsync(new AuditRecord { Action = "invoice.issued", EntityType = "invoice", EntityId = "i1", Scope = "company-1" });
+        await env.Chronicle.RecordAsync(new AuditRecord { Action = "invoice.issued", EntityType = "invoice", EntityId = "i2", Scope = "company-2" });
+        await env.Chronicle.RecordAsync(new AuditRecord { Action = "party.created", EntityType = "party", EntityId = "p1", Scope = "company-1" });
+
+        Assert.Equal(["p1", "i1"], (await env.Chronicle.QueryAsync(new ChronicleQuery { Scope = "company-1" })).Select(e => e.EntityId));
+        Assert.Equal(["p1", "i1", "o1"], (await env.Chronicle.QueryAsync(new ChronicleQuery { Scope = "company-1", IncludeUnscoped = true })).Select(e => e.EntityId));
+        var summary = await env.Chronicle.SummarizeAsync(new ChronicleQuery { Scope = "company-1", IncludeUnscoped = true, Take = 1 });
+        Assert.Equal(3, summary.Total);
+        Assert.Equal(["invoice", "order", "party"], summary.EntityTypes);
+        Assert.True((await env.Chronicle.VerifyAsync()).IsValid);
+
+        if (!ef)
+        {
+            ((InMemoryChronicleStore)env.Store).Tamper("acme", 2, e => e with { Scope = "company-2" });
+            var v = await env.Chronicle.VerifyAsync();
+            Assert.False(v.IsValid);
+            Assert.Equal(2, v.FirstBrokenSequence);
+        }
+    }
+
     [Fact]
     public async Task Modified_entries_removed_entries_and_forged_chains_are_detected()
     {

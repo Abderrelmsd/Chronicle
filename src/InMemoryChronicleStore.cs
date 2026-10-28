@@ -47,14 +47,26 @@ public sealed class InMemoryChronicleStore : IChronicleStore
         lock (_gate)
         {
             IEnumerable<AuditEntry> src = _chains.TryGetValue(chain, out var l) ? l.Values : [];
-            src = src.Where(e => (q.IncludeArchived || !e.Archived)
-                && (q.EntityType is null || e.EntityType == q.EntityType) && (q.EntityId is null || e.EntityId == q.EntityId)
-                && (q.Actor is null || e.Actor == q.Actor) && (q.Action is null || e.Action == q.Action)
-                && (q.SubjectId is null || e.SubjectId == q.SubjectId)
-                && (q.From is null || e.OccurredAt >= q.From) && (q.To is null || e.OccurredAt <= q.To));
-            return Task.FromResult<IReadOnlyList<AuditEntry>>([.. src.OrderByDescending(e => e.Sequence).Skip(q.Skip).Take(q.Take)]);
+            return Task.FromResult<IReadOnlyList<AuditEntry>>([.. Filter(src, q).OrderByDescending(e => e.Sequence).Skip(q.Skip).Take(q.Take)]);
         }
     }
+
+    public Task<ChronicleSummary> SummarizeAsync(string chain, ChronicleQuery q, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            var matching = Filter(_chains.TryGetValue(chain, out var l) ? l.Values : [], q).ToList();
+            return Task.FromResult(new ChronicleSummary(matching.Count,
+                [.. matching.Select(e => e.EntityType).OfType<string>().Distinct().Order(StringComparer.Ordinal)]));
+        }
+    }
+
+    private static IEnumerable<AuditEntry> Filter(IEnumerable<AuditEntry> src, ChronicleQuery q) => src.Where(e => (q.IncludeArchived || !e.Archived)
+        && (q.EntityType is null || e.EntityType == q.EntityType) && (q.EntityId is null || e.EntityId == q.EntityId)
+        && (q.Actor is null || e.Actor == q.Actor) && (q.Action is null || e.Action == q.Action)
+        && (q.SubjectId is null || e.SubjectId == q.SubjectId)
+        && (q.Scope is null || e.Scope == q.Scope || (q.IncludeUnscoped && e.Scope is null))
+        && (q.From is null || e.OccurredAt >= q.From) && (q.To is null || e.OccurredAt <= q.To));
 
     public Task<IReadOnlyList<AuditEntry>> GetUnarchivedBeforeAsync(string chain, DateTimeOffset cutoff, int take, CancellationToken ct)
     {

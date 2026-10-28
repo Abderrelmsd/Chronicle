@@ -17,6 +17,7 @@ public class ChronicleEntryRow : ITenantScoped
     public string? EntityId { get; set; }
     public string? Actor { get; set; }
     public string? SubjectId { get; set; }
+    public string? Scope { get; set; }
     public string DataJson { get; set; } = "{}";
     public string PiiJson { get; set; } = "{}";
     public byte[] PrevHash { get; set; } = [];
@@ -29,14 +30,14 @@ public class ChronicleEntryRow : ITenantScoped
     public static ChronicleEntryRow From(AuditEntry e) => new()
     {
         TenantId = e.Chain, Sequence = e.Sequence, Id = e.Id, OccurredAt = e.OccurredAt, Action = e.Action, EntityType = e.EntityType, EntityId = e.EntityId,
-        Actor = e.Actor, SubjectId = e.SubjectId, DataJson = e.DataJson,
+        Actor = e.Actor, SubjectId = e.SubjectId, Scope = e.Scope, DataJson = e.DataJson,
         PiiJson = JsonSerializer.Serialize(e.Pii.ToDictionary(kv => kv.Key, kv => Convert.ToBase64String(kv.Value.Envelope))),
         PrevHash = e.PrevHash, Hash = e.Hash, SealKeyVersion = e.SealKeyVersion, Seal = e.Seal, Archived = e.Archived, ArchiveRef = e.ArchiveRef,
     };
 
     public AuditEntry ToEntry() => new(Id, TenantId, Sequence, OccurredAt, Action, EntityType, EntityId, Actor, SubjectId, DataJson,
         (JsonSerializer.Deserialize<Dictionary<string, string>>(PiiJson) ?? []).ToDictionary(kv => kv.Key, kv => new EncryptedField(Convert.FromBase64String(kv.Value))),
-        PrevHash, Hash, SealKeyVersion, Seal, Archived, ArchiveRef);
+        PrevHash, Hash, SealKeyVersion, Seal, Archived, ArchiveRef, Scope);
 }
 
 public sealed class ChronicleDb(DbContextOptions<ChronicleDb> options, ITenantContext tenant) : BedrockDbContext(options, tenant)
@@ -57,6 +58,7 @@ public sealed class ChronicleDb(DbContextOptions<ChronicleDb> options, ITenantCo
             e.Property(x => x.EntityId).HasColumnName("entity_id").HasMaxLength(200);
             e.Property(x => x.Actor).HasColumnName("actor").HasMaxLength(200);
             e.Property(x => x.SubjectId).HasColumnName("subject_id").HasMaxLength(200);
+            e.Property(x => x.Scope).HasColumnName("scope").HasMaxLength(200);
             e.Property(x => x.DataJson).HasColumnName("data_json");
             e.Property(x => x.PiiJson).HasColumnName("pii_json");
             e.Property(x => x.PrevHash).HasColumnName("prev_hash");
@@ -68,6 +70,7 @@ public sealed class ChronicleDb(DbContextOptions<ChronicleDb> options, ITenantCo
             e.HasIndex(x => new { x.TenantId, x.EntityType, x.EntityId });
             e.HasIndex(x => new { x.TenantId, x.OccurredAt });
             e.HasIndex(x => new { x.TenantId, x.SubjectId });
+            e.HasIndex(x => new { x.TenantId, x.Scope, x.Sequence });
             e.HasIndex(x => x.Id).IsUnique();
         });
         base.OnModelCreating(mb);
@@ -82,10 +85,10 @@ public sealed class ChronicleDb(DbContextOptions<ChronicleDb> options, ITenantCo
           IF TG_OP = 'DELETE' THEN
             RAISE EXCEPTION 'chronicle_entries is append-only: DELETE is not allowed' USING ERRCODE = 'integrity_constraint_violation';
           END IF;
-          IF (NEW.tenant_id, NEW.sequence, NEW.id, NEW.occurred_at, NEW.action, NEW.entity_type, NEW.entity_id, NEW.actor, NEW.subject_id,
+          IF (NEW.tenant_id, NEW.sequence, NEW.id, NEW.occurred_at, NEW.action, NEW.entity_type, NEW.entity_id, NEW.actor, NEW.subject_id, NEW.scope,
               NEW.data_json, NEW.pii_json, NEW.prev_hash, NEW.hash, NEW.seal_key_version, NEW.seal)
              IS DISTINCT FROM
-             (OLD.tenant_id, OLD.sequence, OLD.id, OLD.occurred_at, OLD.action, OLD.entity_type, OLD.entity_id, OLD.actor, OLD.subject_id,
+             (OLD.tenant_id, OLD.sequence, OLD.id, OLD.occurred_at, OLD.action, OLD.entity_type, OLD.entity_id, OLD.actor, OLD.subject_id, OLD.scope,
               OLD.data_json, OLD.pii_json, OLD.prev_hash, OLD.hash, OLD.seal_key_version, OLD.seal) THEN
             RAISE EXCEPTION 'chronicle_entries is append-only: only archived/archive_ref may change' USING ERRCODE = 'integrity_constraint_violation';
           END IF;

@@ -118,17 +118,32 @@ internal sealed class EfChronicleStore(IChronicleUnits units) : IChronicleStore
     public async Task<IReadOnlyList<AuditEntry>> QueryAsync(string chain, ChronicleQuery q, CancellationToken ct)
     {
         await using var unit = await units.OpenAsync(chain, ct);
-        var query = unit.Db.Entries.AsNoTracking().Where(e => e.TenantId == chain);
+        var rows = await Filter(unit.Db.Entries.AsNoTracking(), chain, q).OrderByDescending(e => e.Sequence).Skip(q.Skip).Take(q.Take).ToListAsync(ct);
+        return [.. rows.Select(r => r.ToEntry())];
+    }
+
+    public async Task<ChronicleSummary> SummarizeAsync(string chain, ChronicleQuery q, CancellationToken ct)
+    {
+        await using var unit = await units.OpenAsync(chain, ct);
+        var filtered = Filter(unit.Db.Entries.AsNoTracking(), chain, q);
+        var total = await filtered.CountAsync(ct);
+        var types = await filtered.Where(e => e.EntityType != null).Select(e => e.EntityType!).Distinct().OrderBy(t => t).ToListAsync(ct);
+        return new ChronicleSummary(total, types);
+    }
+
+    private static IQueryable<ChronicleEntryRow> Filter(IQueryable<ChronicleEntryRow> query, string chain, ChronicleQuery q)
+    {
+        query = query.Where(e => e.TenantId == chain);
         if (!q.IncludeArchived) query = query.Where(e => !e.Archived);
         if (q.EntityType is not null) query = query.Where(e => e.EntityType == q.EntityType);
         if (q.EntityId is not null) query = query.Where(e => e.EntityId == q.EntityId);
         if (q.Actor is not null) query = query.Where(e => e.Actor == q.Actor);
         if (q.Action is not null) query = query.Where(e => e.Action == q.Action);
         if (q.SubjectId is not null) query = query.Where(e => e.SubjectId == q.SubjectId);
+        if (q.Scope is not null) query = q.IncludeUnscoped ? query.Where(e => e.Scope == q.Scope || e.Scope == null) : query.Where(e => e.Scope == q.Scope);
         if (q.From is not null) query = query.Where(e => e.OccurredAt >= q.From);
         if (q.To is not null) query = query.Where(e => e.OccurredAt <= q.To);
-        var rows = await query.OrderByDescending(e => e.Sequence).Skip(q.Skip).Take(q.Take).ToListAsync(ct);
-        return [.. rows.Select(r => r.ToEntry())];
+        return query;
     }
 
     public async Task<IReadOnlyList<AuditEntry>> GetUnarchivedBeforeAsync(string chain, DateTimeOffset cutoff, int take, CancellationToken ct)

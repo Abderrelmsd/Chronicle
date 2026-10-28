@@ -153,16 +153,16 @@ internal static class PendingJson
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     private sealed record Row(Guid Id, string Chain, DateTimeOffset OccurredAt, string Action, string? EntityType, string? EntityId, string? Actor, string? SubjectId,
-        string DataJson, Dictionary<string, string> Pii);
+        string DataJson, Dictionary<string, string> Pii, string? Scope = null);
 
     public static string Write(PreparedEntry e) => JsonSerializer.Serialize(
         new Row(e.Id, e.Chain, e.OccurredAt, e.Action, e.EntityType, e.EntityId, e.Actor, e.SubjectId, e.DataJson,
-            e.Pii.ToDictionary(kv => kv.Key, kv => Convert.ToBase64String(kv.Value.Envelope))), Json);
+            e.Pii.ToDictionary(kv => kv.Key, kv => Convert.ToBase64String(kv.Value.Envelope)), e.Scope), Json);
 
     public static PreparedEntry Read(string json)
     {
         var r = JsonSerializer.Deserialize<Row>(json, Json) ?? throw new ChronicleException("Unreadable pending record.");
         return new PreparedEntry(r.Id, r.Chain, r.OccurredAt, r.Action, r.EntityType, r.EntityId, r.Actor, r.SubjectId, r.DataJson,
-            r.Pii.ToDictionary(kv => kv.Key, kv => new EncryptedField(Convert.FromBase64String(kv.Value))));
+            r.Pii.ToDictionary(kv => kv.Key, kv => new EncryptedField(Convert.FromBase64String(kv.Value))), r.Scope);
     }
 }
