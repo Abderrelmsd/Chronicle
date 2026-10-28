@@ -62,7 +62,7 @@ public class PostgresOutboxTests(PgFixture pg) : IClassFixture<PgFixture>
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private ServiceProvider Build()
+    private ServiceProvider Build(Action<ChronicleOptions>? configure = null)
     {
         var s = new ServiceCollection();
         s.AddLogging();
@@ -75,7 +75,7 @@ public class PostgresOutboxTests(PgFixture pg) : IClassFixture<PgFixture>
             o.ApplicationRole = "app_rls";
         });
         s.AddChronicleBedrockSessions();
-        s.AddChronicle();
+        s.AddChronicle(configure);
         return s.BuildServiceProvider();
     }
 
@@ -173,5 +173,26 @@ public class PostgresOutboxTests(PgFixture pg) : IClassFixture<PgFixture>
         {
             Assert.Empty(await sp.GetRequiredService<IChronicle>().QueryAsync(cancellationToken: Ct));
         }
+    }
+
+    [Fact]
+    public async Task Ingesting_everything_pending_passes_until_nothing_is_left()
+    {
+        Assert.SkipUnless(pg.Available, pg.Reason);
+        await using var sp = Build(o => o.IngestBatchSize = 2);
+        var tenants = sp.GetRequiredService<ITenantContextAccessor>();
+        var outbox = sp.GetRequiredService<IChronicleOutbox>();
+        var connections = sp.CreateScope().ServiceProvider.GetRequiredService<IBedrockConnectionFactory>();
+        var tenant = "t" + Guid.NewGuid().ToString("N")[..8];
+        using (tenants.Use(tenant))
+        {
+            await using var connection = await connections.OpenTenantConnectionAsync(Ct);
+            await using var transaction = await connections.BeginTenantTransactionAsync(connection, cancellationToken: Ct);
+            for (var i = 0; i < 5; i++) await outbox.RecordInTransactionAsync(connection, transaction, Record("invoice.saved"), Ct);
+            await transaction.CommitAsync(Ct);
+        }
+
+        Assert.True(await sp.GetRequiredService<IChronicleIngestor>().IngestPendingAsync(Ct) >= 5);
+        using (tenants.Use(tenant)) Assert.Equal(5, (await sp.GetRequiredService<IChronicle>().SummarizeAsync(cancellationToken: Ct)).Total);
     }
 }

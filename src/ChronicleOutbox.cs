@@ -25,6 +25,12 @@ public interface IChronicleIngestor
 {
     /// <summary>One pass over every cluster's pending table; returns how many records were linked.</summary>
     Task<int> IngestOnceAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Links everything pending now (a reader that must see its own writes): waits for a pass another instance is running, and passes
+    /// again until nothing is left. Returns how many records this call linked.
+    /// </summary>
+    Task<int> IngestPendingAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>The pending table's DDL and row-level security.</summary>
@@ -78,24 +84,40 @@ internal sealed class ChronicleIngestor(
     // One ingester per cluster at a time keeps each chain's records in their committed order.
     private const long LockKey = 0x4368726F6E69636CL;
 
-    public async Task<int> IngestOnceAsync(CancellationToken ct = default)
+    public Task<int> IngestOnceAsync(CancellationToken ct = default) => PassAsync(wait: false, ct);
+
+    public async Task<int> IngestPendingAsync(CancellationToken ct = default)
+    {
+        var total = 0;
+        for (var linked = await PassAsync(wait: true, ct); linked > 0; linked = await PassAsync(wait: true, ct)) total += linked;
+        return total;
+    }
+
+    private async Task<int> PassAsync(bool wait, CancellationToken ct)
     {
         var total = 0;
         foreach (var cluster in sources.ClusterIds)
         {
             if (sources.System(cluster) is not { } system) continue;
-            total += await IngestClusterAsync(system, ct);
+            total += await IngestClusterAsync(system, wait, ct);
         }
 
         return total;
     }
 
-    private async Task<int> IngestClusterAsync(NpgsqlDataSource system, CancellationToken ct)
+    private async Task<int> IngestClusterAsync(NpgsqlDataSource system, bool wait, CancellationToken ct)
     {
         await using var connection = await system.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
-        await using (var locked = new NpgsqlCommand("SELECT pg_try_advisory_xact_lock(@key)", connection, transaction))
+        if (wait)
         {
+            await using var locking = new NpgsqlCommand("SELECT pg_advisory_xact_lock(@key)", connection, transaction);
+            locking.Parameters.AddWithValue("key", LockKey);
+            await locking.ExecuteNonQueryAsync(ct);
+        }
+        else
+        {
+            await using var locked = new NpgsqlCommand("SELECT pg_try_advisory_xact_lock(@key)", connection, transaction);
             locked.Parameters.AddWithValue("key", LockKey);
             if (!(bool)(await locked.ExecuteScalarAsync(ct))!) return 0;
         }
